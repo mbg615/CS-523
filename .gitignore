@@ -429,3 +429,5 @@ spark-warehouse/
 [Ss]cripts
 pyvenv.cfg
 pip-selfcheck.json
+
+node_modules/*
