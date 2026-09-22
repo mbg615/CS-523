@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flights: Pack / Circle Packing Diagram (Year &gt; Month)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{ --paper:#eef2f7; --ink:#1c1a16; --ink-soft:#5a5548; --rule:#d4dbe5; --accent:#e8641c; --teal:#265c56; }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  header{padding:40px 56px 24px; border-bottom:1px solid var(--rule);}
+  header h1{font-family:Georgia,"Times New Roman",serif; font-size:28px; margin:0 0 8px;}
+  header p{max-width:680px; color:var(--ink-soft); font-size:15px; margin:0;}
+  main{padding:36px 56px 60px;}
+  .chart-box{background:#fff; border:1px solid var(--rule); border-radius:6px; padding:24px; display:inline-block;}
+  .node circle{stroke:#fff; stroke-width:1.5; cursor:pointer;}
+  .node text{font-size:10.5px; pointer-events:none; text-anchor:middle;}
+  .tooltip{position:absolute; background:var(--ink); color:var(--paper); padding:7px 11px; border-radius:4px; font-size:12.5px; pointer-events:none; opacity:0; transition:opacity .1s;}
+  .status{color:var(--ink-soft); font-size:14px; padding:20px 0;}
+  footer{padding:20px 56px 40px; color:var(--ink-soft); font-size:13px; border-top:1px solid var(--rule);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flights: Pack / Circle Packing Diagram (Year &gt; Month)</h1>
+  <p>Built with <code>d3.pack()</code>, which nests circles tightly inside their parent's circle, sized by value. The 12 big circles are years; each small circle inside is one month, sized by passenger count that month. Data loaded live from <code>flights.csv</code> (144 rows = 12 years &times; 12 months) using <code>d3.stratify()</code>.</p>
+</header>
+
+<main>
+  <div id="status" class="status">Loading flights.csv...</div>
+  <div class="chart-box" id="chartBox" style="display:none;"><svg id="chart" width="900" height="900"></svg></div>
+</main>
+
+<footer>
+  Requires a local server: <code>python3 -m http.server 8000</code>, then visit <code>http://localhost:8000/pack_flights.html</code>.
+</footer>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+var tooltip = d3.select("#tooltip");
+var monthOrder = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var yearColor = d3.scaleOrdinal().range(d3.quantize(d3.interpolateRainbow, 12));
+
+d3.csv("flights.csv", d3.autoType).then(function(rows) {
+  document.getElementById("status").style.display = "none";
+  document.getElementById("chartBox").style.display = "inline-block";
+
+  var yearOrder = Array.from(new Set(rows.map(function(d){ return d.year; }))).sort(function(a,b){ return a - b; });
+  yearColor.domain(yearOrder);
+
+  var rolled = d3.rollup(rows, function(v){ return v[0].passengers; }, function(d){ return d.year; }, function(d){ return d.month; });
+
+  var flat = [{id: "Flights", parentId: null}];
+  yearOrder.forEach(function(year) {
+    flat.push({id: String(year), parentId: "Flights"});
+    monthOrder.forEach(function(month) {
+      var count = (rolled.get(year) && rolled.get(year).get(month)) || 0;
+      if (count > 0) flat.push({id: year + " " + month, parentId: String(year), value: count, year: year, month: month});
+    });
+  });
+
+  var root = d3.stratify().id(function(d){ return d.id; }).parentId(function(d){ return d.parentId; })(flat);
+  root = root.sum(function(d){ return d.value || 0; });
+  root.sort(function(a, b){ return b.value - a.value; });
+
+  var width = 900, height = 900;
+
+  var packLayout = d3.pack().size([width - 4, height - 4]).padding(4);
+  packLayout(root);
+
+  var svg = d3.select("#chart").append("g").attr("transform", "translate(2,2)");
+
+  var node = svg.selectAll(".node")
+    .data(root.descendants())
+    .join("g")
+      .attr("class", "node")
+      .attr("transform", function(d){ return "translate(" + d.x + "," + d.y + ")"; });
+
+  node.append("circle")
+      .attr("r", function(d){ return d.r; })
+      .attr("fill", function(d){
+        if (d.depth === 0) return "none";
+        if (d.depth === 1) return yearColor(+d.data.id);
+        return yearColor(d.data.year);
+      })
+      .attr("fill-opacity", function(d){ return d.depth === 1 ? 0.18 : d.depth === 2 ? 0.85 : 1; })
+      .attr("stroke", function(d){ return d.depth === 0 ? "#c7cfda" : "#fff"; })
+      .on("mouseover", function(event, d) {
+        if (d.depth === 0) return;
+        d3.select(this).attr("stroke", "#1c1a16").attr("stroke-width", 2.5);
+        var label = d.depth === 1 ? d.data.id : d.data.month + " " + d.data.year;
+        tooltip.style("opacity", 1).html(label + "<br><strong>" + d.value.toLocaleString() + "</strong> passengers")
+          .style("left", (event.pageX + 12) + "px").style("top", (event.pageY - 10) + "px");
+      })
+      .on("mouseout", function(event, d) {
+        d3.select(this).attr("stroke", d.depth === 0 ? "#c7cfda" : "#fff").attr("stroke-width", 1.5);
+        tooltip.style("opacity", 0);
+      });
+
+  node.filter(function(d){ return d.depth === 1; }).append("text")
+      .attr("y", function(d){ return -d.r + 14; })
+      .attr("fill", "#1c1a16")
+      .style("font-weight", "600")
+      .text(function(d){ return d.data.id; });
+
+  node.filter(function(d){ return d.depth === 2 && d.r > 11; }).append("text")
+      .attr("dy", "0.32em")
+      .attr("fill", "#fff")
+      .text(function(d){ return d.data.month; });
+
+}).catch(function(err) {
+  document.getElementById("status").innerHTML =
+    "Could not load flights.csv. Serve this folder over http:// (see footer for the command).<br><br>Error detail: " + err;
+});
+</script>
+
+</body>
+</html>

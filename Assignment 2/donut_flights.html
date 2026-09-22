@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flights: Total Passengers by Year (Donut Chart)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{ --paper:#eef2f7; --ink:#1c1a16; --ink-soft:#5a5548; --rule:#ddd6c7; --accent:#e8641c; --teal:#265c56; }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  header{padding:40px 56px 24px; border-bottom:1px solid var(--rule);}
+  header h1{font-family:Georgia,"Times New Roman",serif; font-size:28px; margin:0 0 8px;}
+  header p{max-width:640px; color:var(--ink-soft); font-size:15px; margin:0;}
+  main{padding:36px 56px 60px;}
+  .chart-box{background:#fff; border:1px solid var(--rule); border-radius:6px; padding:24px; display:inline-block;}
+  .legend text{font-size:13px; fill:var(--ink);}
+  .center-label{text-anchor:middle; fill:var(--ink);}
+  .center-label .big{font-size:26px; font-weight:700; font-family:Georgia,serif;}
+  .center-label .small{font-size:12px; fill:var(--ink-soft);}
+  .tooltip{position:absolute; background:var(--ink); color:var(--paper); padding:7px 11px; border-radius:4px; font-size:12.5px; pointer-events:none; opacity:0; transition:opacity .1s;}
+  .status{color:var(--ink-soft); font-size:14px; padding:20px 0;}
+  footer{padding:20px 56px 40px; color:var(--ink-soft); font-size:13px; border-top:1px solid var(--rule);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flights: Total Passengers by Year (Donut Chart)</h1>
+  <p>Built with <code>d3.pie()</code> to compute each slice's angles and <code>d3.arc()</code> to draw them, with an inner radius for the "donut" hole. Each slice is one year's share of total passengers across all 12 years, aggregated live from <code>flights.csv</code> with <code>d3.rollup()</code>.</p>
+</header>
+
+<main>
+  <div id="status" class="status">Loading flights.csv...</div>
+  <div class="chart-box" id="chartBox" style="display:none;"><svg id="chart" width="620" height="440"></svg></div>
+</main>
+
+<footer>
+  Requires a local server: <code>python3 -m http.server 8000</code>, then visit <code>http://localhost:8000/donut_flights.html</code>.
+</footer>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+var tooltip = d3.select("#tooltip");
+
+d3.csv("flights.csv", d3.autoType).then(function(rows) {
+  document.getElementById("status").style.display = "none";
+  document.getElementById("chartBox").style.display = "inline-block";
+
+  var rolled = d3.rollup(rows, function(v){ return d3.sum(v, function(d){ return d.passengers; }); }, function(d){ return d.year; });
+  var data = Array.from(rolled, function(d){ return {label: String(d[0]), value: d[1]}; })
+                  .sort(function(a, b){ return d3.ascending(+a.label, +b.label); });
+  var total = d3.sum(data, function(d){ return d.value; });
+
+  var width = 620, height = 440;
+  var radius = Math.min(260, height - 40) / 2;
+  var color = d3.scaleOrdinal().domain(data.map(function(d){ return d.label; }))
+                .range(d3.quantize(d3.interpolateRainbow, data.length));
+
+  var svg = d3.select("#chart").append("g")
+    .attr("transform", "translate(" + (radius + 30) + "," + (height/2) + ")");
+
+  var pie = d3.pie().value(function(d){ return d.value; }).sort(null);
+  var arc = d3.arc().innerRadius(radius * 0.6).outerRadius(radius);
+  var arcHover = d3.arc().innerRadius(radius * 0.6).outerRadius(radius * 1.05);
+
+  var arcs = pie(data);
+
+  svg.selectAll("path")
+    .data(arcs)
+    .join("path")
+      .attr("d", arc)
+      .attr("fill", function(d){ return color(d.data.label); })
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 2)
+      .on("mouseover", function(event, d) {
+        d3.select(this).transition().duration(150).attr("d", arcHover);
+        var pct = Math.round(d.data.value / total * 100);
+        tooltip.style("opacity", 1)
+          .html("<strong>" + d.data.label + "</strong><br>" + d.data.value.toLocaleString() + " passengers (" + pct + "%)")
+          .style("left", (event.pageX + 12) + "px").style("top", (event.pageY - 10) + "px");
+      })
+      .on("mouseout", function() {
+        d3.select(this).transition().duration(150).attr("d", arc);
+        tooltip.style("opacity", 0);
+      });
+
+  // Center label showing total passengers across all years
+  var center = svg.append("g").attr("class", "center-label");
+  center.append("text").attr("class", "big").attr("y", -2).text(total.toLocaleString());
+  center.append("text").attr("class", "small").attr("y", 16).text("total passengers");
+
+  // Legend (two columns of 6 so all 12 years fit without overlapping)
+  var legend = d3.select("#chart").append("g").attr("transform", "translate(" + (2*radius + 70) + "," + (height/2 - radius) + ")");
+  data.forEach(function(d, i) {
+    var col = Math.floor(i / 6);
+    var row = i % 6;
+    var g = legend.append("g").attr("transform", "translate(" + (col*130) + "," + (row*30) + ")");
+    g.append("rect").attr("width", 14).attr("height", 14).attr("fill", color(d.label));
+    g.append("text").attr("class", "legend").attr("x", 20).attr("y", 12).text(d.label + " (" + d.value.toLocaleString() + ")");
+  });
+
+}).catch(function(err) {
+  document.getElementById("status").innerHTML =
+    "Could not load flights.csv. Serve this folder over http:// (see footer for the command).<br><br>Error detail: " + err;
+});
+</script>
+
+</body>
+</html>
